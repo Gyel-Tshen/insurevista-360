@@ -1,0 +1,968 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "adf-insurevista-dev"
+        },
+        "LS_KeyVault_properties_typeProperties_baseUrl": {
+            "type": "string",
+            "defaultValue": "https://kv-insurevista-dev.vault.azure.net/"
+        },
+        "LS_ADLS_Hollard_properties_typeProperties_url": {
+            "type": "string",
+            "defaultValue": "https://hollardlake.dfs.core.windows.net/"
+        },
+        "LS_SQLServer_HollardDW_properties_typeProperties_server": {
+            "type": "string",
+            "defaultValue": "localhost"
+        },
+        "LS_SQLServer_HollardDW_properties_typeProperties_database": {
+            "type": "string",
+            "defaultValue": "HollardDW"
+        },
+        "LS_SQLServer_HollardDW_properties_typeProperties_userName": {
+            "type": "string",
+            "defaultValue": "sa"
+        },
+        "LS_Snowflake_properties_typeProperties_database": {
+            "type": "string",
+            "defaultValue": "HOLLARD_DW"
+        },
+        "LS_Snowflake_properties_typeProperties_role": {
+            "type": "string",
+            "defaultValue": "LOADER_ROLE"
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "[concat(parameters('factoryName'), '/PL_SQLServer_to_Bronze')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "ForEach_Table",
+                        "type": "ForEach",
+                        "dependsOn": [],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@json(string(pipeline().parameters.TableList))",
+                                "type": "Expression"
+                            },
+                            "batchCount": 3,
+                            "activities": [
+                                {
+                                    "name": "Copy_SQL_to_Bronze",
+                                    "type": "Copy",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.12:00:00",
+                                        "retry": 2,
+                                        "retryIntervalInSeconds": 60,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "source": {
+                                            "type": "SqlServerSource",
+                                            "queryTimeout": "02:00:00",
+                                            "partitionOption": "None"
+                                        },
+                                        "sink": {
+                                            "type": "ParquetSink",
+                                            "storeSettings": {
+                                                "type": "AzureBlobFSWriteSettings"
+                                            },
+                                            "formatSettings": {
+                                                "type": "ParquetWriteSettings"
+                                            }
+                                        },
+                                        "enableStaging": false,
+                                        "translator": {
+                                            "type": "TabularTranslator",
+                                            "typeConversion": true,
+                                            "typeConversionSettings": {
+                                                "allowDataTruncation": true,
+                                                "treatBooleanAsNumber": false
+                                            }
+                                        }
+                                    },
+                                    "inputs": [
+                                        {
+                                            "referenceName": "DS_SQLServer_Table",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "SchemaName": {
+                                                    "value": "@item().schema",
+                                                    "type": "Expression"
+                                                },
+                                                "TableName": {
+                                                    "value": "@item().table",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "outputs": [
+                                        {
+                                            "referenceName": "DS_ADLS_Parquet",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "FolderPath": {
+                                                    "value": "@concat('sqlserver/', toLower(item().table), '/', convertFromUtc(utcNow(), 'AUS Eastern Standard Time', 'yyyy/MM/dd'))",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "TableList": {
+                        "type": "array",
+                        "defaultValue": [
+                            {
+                                "schema": "dbo",
+                                "table": "Customers"
+                            },
+                            {
+                                "schema": "dbo",
+                                "table": "Brokers"
+                            },
+                            {
+                                "schema": "dbo",
+                                "table": "Policies"
+                            },
+                            {
+                                "schema": "dbo",
+                                "table": "Claims"
+                            },
+                            {
+                                "schema": "dbo",
+                                "table": "Premium_Transactions"
+                            }
+                        ]
+                    }
+                },
+                "annotations": [],
+                "lastPublishTime": "2026-10-09T17:02:17Z"
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/DS_SQLServer_Table')]",
+                "[concat(variables('factoryId'), '/datasets/DS_ADLS_Parquet')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/PL_Validate_Bronze_Files')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "ForEach_File",
+                        "type": "ForEach",
+                        "dependsOn": [],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@json(string(pipeline().parameters.FileList))",
+                                "type": "Expression"
+                            },
+                            "activities": [
+                                {
+                                    "name": "Get_File_Metadata",
+                                    "type": "GetMetadata",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.12:00:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "dataset": {
+                                            "referenceName": "DS_ADLS_Binary",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "FolderPath": {
+                                                    "value": "@item().folder",
+                                                    "type": "Expression"
+                                                },
+                                                "FileName": {
+                                                    "value": "@item().file",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        },
+                                        "fieldList": [
+                                            "exists",
+                                            "size"
+                                        ],
+                                        "storeSettings": {
+                                            "type": "AzureBlobFSReadSettings",
+                                            "recursive": true,
+                                            "enablePartitionDiscovery": false
+                                        },
+                                        "formatSettings": {
+                                            "type": "BinaryReadSettings"
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "If_File_Valid",
+                                    "type": "IfCondition",
+                                    "dependsOn": [
+                                        {
+                                            "activity": "Get_File_Metadata",
+                                            "dependencyConditions": [
+                                                "Succeeded"
+                                            ]
+                                        }
+                                    ],
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "expression": {
+                                            "value": "@and(activity('Get_File_Metadata').output.exists, greater(coalesce(activity('Get_File_Metadata').output?.size, 0), 0))",
+                                            "type": "Expression"
+                                        },
+                                        "ifFalseActivities": [
+                                            {
+                                                "name": "Fail_Missing_File",
+                                                "type": "Fail",
+                                                "dependsOn": [],
+                                                "userProperties": [],
+                                                "typeProperties": {
+                                                    "message": {
+                                                        "value": "@concat('Missing or empty file: ', item().folder, '/', item().file)",
+                                                        "type": "Expression"
+                                                    },
+                                                    "errorCode": {
+                                                        "value": "BRONZE_FILE_MISSING",
+                                                        "type": "Expression"
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "FileList": {
+                        "type": "array",
+                        "defaultValue": [
+                            {
+                                "folder": "csv/motor_vehicle_register",
+                                "file": "motor_vehicle_register.csv"
+                            },
+                            {
+                                "folder": "csv/property_risk_details",
+                                "file": "property_risk_details.csv"
+                            },
+                            {
+                                "folder": "csv/customer_complaints_log",
+                                "file": "customer_complaints_log.csv"
+                            },
+                            {
+                                "folder": "csv/partner_brand_sales",
+                                "file": "partner_brand_sales.csv"
+                            },
+                            {
+                                "folder": "json/catastrophe_risk_feed",
+                                "file": "catastrophe_risk_feed.json"
+                            }
+                        ]
+                    }
+                },
+                "annotations": [],
+                "lastPublishTime": "2026-10-05T12:10:56Z"
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/DS_ADLS_Binary')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/PL_JSON_Flatten')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Copy_JSON_to_Parquet",
+                        "type": "Copy",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "JsonSource",
+                                "storeSettings": {
+                                    "type": "AzureBlobFSReadSettings",
+                                    "recursive": true,
+                                    "enablePartitionDiscovery": false
+                                },
+                                "formatSettings": {
+                                    "type": "JsonReadSettings"
+                                }
+                            },
+                            "sink": {
+                                "type": "ParquetSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobFSWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetWriteSettings"
+                                }
+                            },
+                            "enableStaging": false,
+                            "translator": {
+                                "type": "TabularTranslator",
+                                "mappings": [
+                                    {
+                                        "source": {
+                                            "path": "$['postcode']"
+                                        },
+                                        "sink": {
+                                            "name": "postcode"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['state']"
+                                        },
+                                        "sink": {
+                                            "name": "state"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['assessment_date']"
+                                        },
+                                        "sink": {
+                                            "name": "assessment_date"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['bushfire_risk_score']"
+                                        },
+                                        "sink": {
+                                            "name": "bushfire_risk_score"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['flood_risk_score']"
+                                        },
+                                        "sink": {
+                                            "name": "flood_risk_score"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['cyclone_risk_score']"
+                                        },
+                                        "sink": {
+                                            "name": "cyclone_risk_score"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['storm_risk_score']"
+                                        },
+                                        "sink": {
+                                            "name": "storm_risk_score"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['earthquake_risk_score']"
+                                        },
+                                        "sink": {
+                                            "name": "earthquake_risk_score"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['overall_natcat_index']"
+                                        },
+                                        "sink": {
+                                            "name": "overall_natcat_index"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['historical_claims_density']"
+                                        },
+                                        "sink": {
+                                            "name": "historical_claims_density"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['climate_trend_indicator']"
+                                        },
+                                        "sink": {
+                                            "name": "climate_trend_indicator"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['data_provider']"
+                                        },
+                                        "sink": {
+                                            "name": "data_provider"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['model_version']"
+                                        },
+                                        "sink": {
+                                            "name": "model_version"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "DS_ADLS_Json_CatRisk",
+                                "type": "DatasetReference",
+                                "parameters": {}
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "DS_ADLS_Parquet",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "FolderPath": {
+                                        "value": "json_flattened/catastrophe_risk_scores",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "annotations": [],
+                "lastPublishTime": "2026-10-04T13:31:07Z"
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/DS_ADLS_Json_CatRisk')]",
+                "[concat(variables('factoryId'), '/datasets/DS_ADLS_Parquet')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/PL_Master_Orchestrator')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Run_SQLServer_to_Bronze",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [],
+                        "policy": {
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "PL_SQLServer_to_Bronze",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {}
+                        }
+                    },
+                    {
+                        "name": "Run_Validate_Bronze_Files",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [
+                            {
+                                "activity": "Run_SQLServer_to_Bronze",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "PL_Validate_Bronze_Files",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {}
+                        }
+                    },
+                    {
+                        "name": "Run_JSON_Flatten",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [
+                            {
+                                "activity": "Run_Validate_Bronze_Files",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "PL_JSON_Flatten",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {}
+                        }
+                    },
+                    {
+                        "name": "Run_Databricks_Medallion",
+                        "type": "DatabricksJob",
+                        "dependsOn": [
+                            {
+                                "activity": "Run_JSON_Flatten",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "jobId": "110734174000634",
+                            "jobParameters": {
+                                "batch_id": {
+                                    "value": "@pipeline().RunId",
+                                    "type": "Expression"
+                                }
+                            }
+                        },
+                        "linkedServiceName": {
+                            "referenceName": "LS_Databricks",
+                            "type": "LinkedServiceReference"
+                        }
+                    },
+                    {
+                        "name": "Refresh_Snowflake_Gold",
+                        "type": "Script",
+                        "dependsOn": [
+                            {
+                                "activity": "Run_Databricks_Medallion",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 1,
+                            "retryIntervalInSeconds": 60,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "linkedServiceName": {
+                            "referenceName": "LS_Snowflake",
+                            "type": "LinkedServiceReference"
+                        },
+                        "typeProperties": {
+                            "scripts": [
+                                {
+                                    "type": "Query",
+                                    "text": "   CALL HOLLARD_DW.ANALYTICS.SP_REFRESH_GOLD();"
+                                }
+                            ],
+                            "scriptBlockExecutionTimeout": "02:00:00",
+                            "treatDecimalAsString": false
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "annotations": [],
+                "lastPublishTime": "2026-10-09T16:58:36Z"
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/pipelines/PL_SQLServer_to_Bronze')]",
+                "[concat(variables('factoryId'), '/pipelines/PL_Validate_Bronze_Files')]",
+                "[concat(variables('factoryId'), '/pipelines/PL_JSON_Flatten')]",
+                "[concat(variables('factoryId'), '/linkedServices/LS_Databricks')]",
+                "[concat(variables('factoryId'), '/linkedServices/LS_Snowflake')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/TR_Nightly_2AM')]",
+            "type": "Microsoft.DataFactory/factories/triggers",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "runtimeState": "Started",
+                "pipelines": [
+                    {
+                        "pipelineReference": {
+                            "referenceName": "PL_Master_Orchestrator",
+                            "type": "PipelineReference"
+                        },
+                        "parameters": {}
+                    }
+                ],
+                "type": "ScheduleTrigger",
+                "typeProperties": {
+                    "recurrence": {
+                        "frequency": "Day",
+                        "interval": 1,
+                        "startTime": "2026-10-11T02:00:00",
+                        "timeZone": "AUS Eastern Standard Time",
+                        "schedule": {}
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/pipelines/PL_Master_Orchestrator')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/LS_KeyVault')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureKeyVault",
+                "typeProperties": {
+                    "baseUrl": "[parameters('LS_KeyVault_properties_typeProperties_baseUrl')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/LS_ADLS_Hollard')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureBlobFS",
+                "typeProperties": {
+                    "url": "[parameters('LS_ADLS_Hollard_properties_typeProperties_url')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/LS_SQLServer_HollardDW')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "SqlServer",
+                "typeProperties": {
+                    "server": "[parameters('LS_SQLServer_HollardDW_properties_typeProperties_server')]",
+                    "database": "[parameters('LS_SQLServer_HollardDW_properties_typeProperties_database')]",
+                    "encrypt": "mandatory",
+                    "trustServerCertificate": true,
+                    "authenticationType": "SQL",
+                    "userName": "[parameters('LS_SQLServer_HollardDW_properties_typeProperties_userName')]",
+                    "password": {
+                        "type": "AzureKeyVaultSecret",
+                        "store": {
+                            "referenceName": "LS_KeyVault",
+                            "type": "LinkedServiceReference"
+                        },
+                        "secretName": "sql-sa-password"
+                    }
+                },
+                "connectVia": {
+                    "referenceName": "IR-SelfHosted-Hollard",
+                    "type": "IntegrationRuntimeReference"
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/integrationRuntimes/IR-SelfHosted-Hollard')]",
+                "[concat(variables('factoryId'), '/linkedServices/LS_KeyVault')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/LS_Databricks')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureDatabricks",
+                "typeProperties": {
+                    "domain": "https://adb-7405619770080790.10.azuredatabricks.net",
+                    "authentication": "MSI",
+                    "workspaceResourceId": "/subscriptions/ae05573a-570b-44cb-9a51-36503a402c80/resourceGroups/rg-insurevista-dev/providers/Microsoft.Databricks/workspaces/dbw-insurevista-dev"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/LS_Snowflake')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "SnowflakeV2",
+                "typeProperties": {
+                    "authenticationType": "KeyPair",
+                    "accountIdentifier": "TMKHDME-CT06316",
+                    "user": "ADF_SVC",
+                    "database": "[parameters('LS_Snowflake_properties_typeProperties_database')]",
+                    "warehouse": "ANALYTICS_WH",
+                    "role": "[parameters('LS_Snowflake_properties_typeProperties_role')]",
+                    "privateKey": {
+                        "type": "AzureKeyVaultSecret",
+                        "store": {
+                            "referenceName": "LS_KeyVault",
+                            "type": "LinkedServiceReference"
+                        },
+                        "secretName": "snowflake-adf-private-key"
+                    },
+                    "privateKeyPassphrase": {
+                        "type": "AzureKeyVaultSecret",
+                        "store": {
+                            "referenceName": "LS_KeyVault",
+                            "type": "LinkedServiceReference"
+                        },
+                        "secretName": "snowflake-adf-key-passphrase"
+                    },
+                    "useUtcTimestamps": false
+                },
+                "version": "1.1"
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_KeyVault')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/IR-SelfHosted-Hollard')]",
+            "type": "Microsoft.DataFactory/factories/integrationRuntimes",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "SelfHosted",
+                "typeProperties": {}
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_SQLServer_Table')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_SQLServer_HollardDW",
+                    "type": "LinkedServiceReference"
+                },
+                "parameters": {
+                    "SchemaName": {
+                        "type": "string"
+                    },
+                    "TableName": {
+                        "type": "string"
+                    }
+                },
+                "annotations": [],
+                "type": "SqlServerTable",
+                "schema": [],
+                "typeProperties": {
+                    "schema": {
+                        "value": "@dataset().SchemaName",
+                        "type": "Expression"
+                    },
+                    "table": {
+                        "value": "@dataset().TableName",
+                        "type": "Expression"
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_SQLServer_HollardDW')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_ADLS_Parquet')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_ADLS_Hollard",
+                    "type": "LinkedServiceReference"
+                },
+                "parameters": {
+                    "FolderPath": {
+                        "type": "string"
+                    }
+                },
+                "annotations": [],
+                "type": "Parquet",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "folderPath": {
+                            "value": "@dataset().FolderPath",
+                            "type": "Expression"
+                        },
+                        "fileSystem": "bronze"
+                    },
+                    "compressionCodec": "snappy"
+                },
+                "schema": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_ADLS_Hollard')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_ADLS_Binary')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_ADLS_Hollard",
+                    "type": "LinkedServiceReference"
+                },
+                "parameters": {
+                    "FolderPath": {
+                        "type": "string"
+                    },
+                    "FileName": {
+                        "type": "string"
+                    }
+                },
+                "annotations": [],
+                "type": "Binary",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": {
+                            "value": "@dataset().FileName",
+                            "type": "Expression"
+                        },
+                        "folderPath": {
+                            "value": "@dataset().FolderPath",
+                            "type": "Expression"
+                        },
+                        "fileSystem": "bronze"
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_ADLS_Hollard')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_ADLS_Json_CatRisk')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "LS_ADLS_Hollard",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobFSLocation",
+                        "fileName": "catastrophe_risk_feed.json",
+                        "folderPath": "json/catastrophe_risk_feed",
+                        "fileSystem": "bronze"
+                    }
+                },
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "postcode": {
+                            "type": "string"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "assessment_date": {
+                            "type": "string"
+                        },
+                        "bushfire_risk_score": {
+                            "type": "number"
+                        },
+                        "flood_risk_score": {
+                            "type": "number"
+                        },
+                        "cyclone_risk_score": {
+                            "type": "number"
+                        },
+                        "storm_risk_score": {
+                            "type": "number"
+                        },
+                        "earthquake_risk_score": {
+                            "type": "number"
+                        },
+                        "overall_natcat_index": {
+                            "type": "number"
+                        },
+                        "historical_claims_density": {
+                            "type": "number"
+                        },
+                        "climate_trend_indicator": {
+                            "type": "string"
+                        },
+                        "data_provider": {
+                            "type": "string"
+                        },
+                        "model_version": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/LS_ADLS_Hollard')]"
+            ]
+        }
+    ]
+}

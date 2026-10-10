@@ -1,0 +1,16 @@
+# Keys and secrets - never commit
+*.p8
+*.pem
+*.key
+.snowflake_keys/
+.env
+
+# Data and binaries
+*.pbix
+*.csv
+*.parquet
+*.bak
+
+# OS clutter
+Thumbs.db
+.DS_Store

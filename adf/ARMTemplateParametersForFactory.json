@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "value": "adf-insurevista-dev"
+        },
+        "LS_KeyVault_properties_typeProperties_baseUrl": {
+            "value": "https://kv-insurevista-dev.vault.azure.net/"
+        },
+        "LS_ADLS_Hollard_properties_typeProperties_url": {
+            "value": "https://hollardlake.dfs.core.windows.net/"
+        },
+        "LS_SQLServer_HollardDW_properties_typeProperties_server": {
+            "value": "localhost"
+        },
+        "LS_SQLServer_HollardDW_properties_typeProperties_database": {
+            "value": "HollardDW"
+        },
+        "LS_SQLServer_HollardDW_properties_typeProperties_userName": {
+            "value": "sa"
+        },
+        "LS_Snowflake_properties_typeProperties_database": {
+            "value": "HOLLARD_DW"
+        },
+        "LS_Snowflake_properties_typeProperties_role": {
+            "value": "LOADER_ROLE"
+        }
+    }
+}
