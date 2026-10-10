@@ -1,0 +1,109 @@
+DEFINE
+    MEASURE '_Measures'[Total GWP] = SUM ( FACT_PREMIUMS[AMOUNT_RECEIVED_AUD] )
+    MEASURE '_Measures'[Premium Due] = SUM ( FACT_PREMIUMS[AMOUNT_DUE_AUD] )
+    MEASURE '_Measures'[Collection Rate %] = DIVIDE ( [Total GWP], [Premium Due] )
+    MEASURE '_Measures'[GST Collected] = SUM ( FACT_PREMIUMS[GST_AUD] )
+    MEASURE '_Measures'[Stamp Duty Collected] = SUM ( FACT_PREMIUMS[STAMP_DUTY_AUD] )
+    MEASURE '_Measures'[Policies Paying] = DISTINCTCOUNT ( FACT_PREMIUMS[POLICY_KEY] )
+    MEASURE '_Measures'[Claim Count] = COUNTROWS ( FACT_CLAIMS )
+    MEASURE '_Measures'[Claimed Amount] = SUM ( FACT_CLAIMS[CLAIM_AMOUNT_AUD] )
+    MEASURE '_Measures'[Incurred Claims] = SUM ( FACT_CLAIMS[APPROVED_AMOUNT_AUD] )
+    MEASURE '_Measures'[Loss Ratio %] = DIVIDE ( [Incurred Claims], [Total GWP] )
+    MEASURE '_Measures'[Avg Days to Settle] = AVERAGE ( FACT_CLAIMS[DAYS_TO_SETTLE] )          // blanks (open claims) are ignored
+    MEASURE '_Measures'[Open Claims] = CALCULATE ( [Claim Count],
+            KEEPFILTERS ( FACT_CLAIMS[CLAIM_STATUS] IN { "Lodged", "Under Assessment" } ) )
+    MEASURE '_Measures'[Fraud Flagged Claims] = CALCULATE ( [Claim Count], KEEPFILTERS ( FACT_CLAIMS[IS_FRAUD_FLAGGED] = TRUE () ) )
+    MEASURE '_Measures'[Fraud Rate %] = DIVIDE ( [Fraud Flagged Claims], [Claim Count] )
+    MEASURE '_Measures'[NatCat Claims] = CALCULATE ( [Claim Count], KEEPFILTERS ( NOT ISBLANK ( FACT_CLAIMS[CATASTROPHE_CODE] ) ) )
+    MEASURE '_Measures'[NatCat Incurred] = CALCULATE ( [Incurred Claims], KEEPFILTERS ( NOT ISBLANK ( FACT_CLAIMS[CATASTROPHE_CODE] ) ) )
+    MEASURE '_Measures'[Claims by Incident Date] = CALCULATE ( [Claim Count],
+            USERELATIONSHIP ( FACT_CLAIMS[INCIDENT_DATE_KEY], DIM_DATE[DATE_KEY] ) )
+    MEASURE '_Measures'[Claims Settled by Settlement Date] = CALCULATE ( [Claim Count],
+            USERELATIONSHIP ( FACT_CLAIMS[SETTLEMENT_DATE_KEY], DIM_DATE[DATE_KEY] ) )
+    MEASURE '_Measures'[Commission Earned] = SUMX ( FACT_PREMIUMS,
+            FACT_PREMIUMS[AMOUNT_RECEIVED_AUD]
+                * RELATED ( DIM_BROKER[COMMISSION_RATE_PCT] ) / 100 )
+    MEASURE '_Measures'[Commission Efficiency] = DIVIDE ( [Total GWP], [Commission Earned] )      // $ of premium per $ of commission
+    MEASURE '_Measures'[Customers] = CALCULATE ( DISTINCTCOUNT ( DIM_CUSTOMER[CUSTOMER_ID] ),
+            DIM_CUSTOMER[IS_CURRENT] = TRUE (), DIM_CUSTOMER[CUSTOMER_KEY] <> -1 )
+    MEASURE '_Measures'[Multi-Policy Customers %] = DIVIDE (
+            CALCULATE ( [Customers], DIM_CUSTOMER[IS_MULTI_POLICY] = TRUE () ),
+            [Customers] )
+    MEASURE '_Measures'[Customer LTV] = CALCULATE ( SUM ( DIM_CUSTOMER[LIFETIME_VALUE_AUD] ),
+            DIM_CUSTOMER[IS_CURRENT] = TRUE () )
+    MEASURE '_Measures'[Avg Customer LTV] = DIVIDE ( [Customer LTV], [Customers] )
+    MEASURE '_Measures'[Complaints] = COUNTROWS ( FACT_COMPLAINTS )
+    MEASURE '_Measures'[AFCA Escalations] = CALCULATE ( [Complaints], KEEPFILTERS ( FACT_COMPLAINTS[IS_AFCA_ESCALATION] = TRUE () ) )
+    MEASURE '_Measures'[AFCA Escalation Rate %] = DIVIDE ( [AFCA Escalations], [Complaints] )
+    MEASURE '_Measures'[IDR Escalations] = CALCULATE ( [Complaints], KEEPFILTERS ( FACT_COMPLAINTS[IS_IDR_ESCALATION] = TRUE () ) )
+    MEASURE '_Measures'[Avg NPS] = AVERAGE ( FACT_COMPLAINTS[NPS_POST_RESOLUTION] )
+    MEASURE '_Measures'[Avg Days to Resolve] = AVERAGE ( FACT_COMPLAINTS[DAYS_TO_RESOLVE] )
+    MEASURE '_Measures'[Partner Sales] = COUNTROWS ( FACT_PARTNER_SALES )
+    MEASURE '_Measures'[Partner Premium] = SUM ( FACT_PARTNER_SALES[PREMIUM_AUD] )
+    MEASURE '_Measures'[Acquisition Cost] = SUM ( FACT_PARTNER_SALES[ACQUISITION_COST_AUD] )
+    MEASURE '_Measures'[Acquisition Cost Ratio %] = DIVIDE ( [Acquisition Cost], [Partner Premium] )
+    MEASURE '_Measures'[Campaign ROI] = DIVIDE ( [Partner Premium] - [Acquisition Cost], [Acquisition Cost] )
+    MEASURE '_Measures'[Funnel 1 Lodged] = [Claim Count]
+    MEASURE '_Measures'[Funnel 2 Assessed] = CALCULATE ( [Claim Count], KEEPFILTERS ( FACT_CLAIMS[CLAIM_STATUS] <> "Lodged" ) )
+    MEASURE '_Measures'[Funnel 3 Decided] = CALCULATE ( [Claim Count],
+            KEEPFILTERS ( FACT_CLAIMS[CLAIM_STATUS] IN { "Approved", "Partially Approved", "Denied" } ) )
+    MEASURE '_Measures'[Funnel 4 Approved] = CALCULATE ( [Claim Count],
+            KEEPFILTERS ( FACT_CLAIMS[CLAIM_STATUS] IN { "Approved", "Partially Approved" } ) )
+    MEASURE '_Measures'[Retention Rate %] = VAR renewed =
+            CALCULATE ( COUNTROWS ( DIM_POLICY ), KEEPFILTERS ( DIM_POLICY[POLICY_STATUS] = "Renewed" ) )
+        VAR exited =
+            CALCULATE ( COUNTROWS ( DIM_POLICY ),
+                KEEPFILTERS ( DIM_POLICY[POLICY_STATUS] IN { "Lapsed", "Cancelled" } ) )
+        RETURN DIVIDE ( renewed, renewed + exited )
+    MEASURE '_Measures'[NPS Score] = VAR responses =
+            CALCULATE ( [Complaints], KEEPFILTERS ( NOT ISBLANK ( FACT_COMPLAINTS[NPS_POST_RESOLUTION] ) ) )
+        VAR promoters =
+            CALCULATE ( [Complaints], KEEPFILTERS ( FACT_COMPLAINTS[NPS_POST_RESOLUTION] >= 9 ) )
+        VAR detractors =
+            CALCULATE ( [Complaints], KEEPFILTERS ( FACT_COMPLAINTS[NPS_POST_RESOLUTION] <= 6 ) )
+        RETURN DIVIDE ( promoters - detractors, responses ) * 100
+
+EVALUATE
+    SUMMARIZECOLUMNS(
+        "Total GWP", [Total GWP],
+        "Premium Due", [Premium Due],
+        "Collection Rate %", [Collection Rate %],
+        "GST Collected", [GST Collected],
+        "Stamp Duty Collected", [Stamp Duty Collected],
+        "Policies Paying", [Policies Paying],
+        "Claim Count", [Claim Count],
+        "Claimed Amount", [Claimed Amount],
+        "Incurred Claims", [Incurred Claims],
+        "Loss Ratio %", [Loss Ratio %],
+        "Avg Days to Settle", [Avg Days to Settle],
+        "Open Claims", [Open Claims],
+        "Fraud Flagged Claims", [Fraud Flagged Claims],
+        "Fraud Rate %", [Fraud Rate %],
+        "NatCat Claims", [NatCat Claims],
+        "NatCat Incurred", [NatCat Incurred],
+        "Claims by Incident Date", [Claims by Incident Date],
+        "Claims Settled by Settlement Date", [Claims Settled by Settlement Date],
+        "Commission Earned", [Commission Earned],
+        "Commission Efficiency", [Commission Efficiency],
+        "Customers", [Customers],
+        "Multi-Policy Customers %", [Multi-Policy Customers %],
+        "Customer LTV", [Customer LTV],
+        "Avg Customer LTV", [Avg Customer LTV],
+        "Complaints", [Complaints],
+        "AFCA Escalations", [AFCA Escalations],
+        "AFCA Escalation Rate %", [AFCA Escalation Rate %],
+        "IDR Escalations", [IDR Escalations],
+        "Avg NPS", [Avg NPS],
+        "Avg Days to Resolve", [Avg Days to Resolve],
+        "Partner Sales", [Partner Sales],
+        "Partner Premium", [Partner Premium],
+        "Acquisition Cost", [Acquisition Cost],
+        "Acquisition Cost Ratio %", [Acquisition Cost Ratio %],
+        "Campaign ROI", [Campaign ROI],
+        "Funnel 1 Lodged", [Funnel 1 Lodged],
+        "Funnel 2 Assessed", [Funnel 2 Assessed],
+        "Funnel 3 Decided", [Funnel 3 Decided],
+        "Funnel 4 Approved", [Funnel 4 Approved],
+        "Retention Rate %", [Retention Rate %],
+        "NPS Score", [NPS Score]
+    )
